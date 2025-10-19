@@ -77,8 +77,83 @@ def convert_iq_file(
                     wf.writeframes(out16.tobytes())
 
 
+def convert_wav_file(
+    input_path: Path,
+    output_path: Path,
+    dtype_name: str,
+    gain: float = 1.0,
+    chunk_frames: int = 1024 * 1024,
+) -> None:
+    dtype = DTYPES[dtype_name]
+
+    with wave.open(str(input_path), "rb") as rf:
+        nchannels = rf.getnchannels()
+        sampwidth = rf.getsampwidth()
+        framerate = rf.getframerate()
+
+        with output_path.open("wb") as out:
+            to_read = chunk_frames
+            while True:
+                raw = rf.readframes(to_read)
+                if not raw:
+                    break
+                if sampwidth == 2:
+                    in_arr = np.frombuffer(raw, dtype=np.int16)
+                elif sampwidth == 1:
+                    in_arr = np.frombuffer(raw, dtype=np.uint8).astype(np.int16) - 128
+                    in_arr = (in_arr * 256).astype(np.int16)
+                elif sampwidth == 4:
+                    in_arr = np.frombuffer(raw, dtype=np.int32).astype(np.float32)
+                    in_arr = (in_arr / 2147483648.0 * 32767.0).astype(np.int16)
+                else:
+                    in_arr = np.frombuffer(raw, dtype=np.int16)
+
+                if in_arr.size == 0:
+                    break
+
+                if nchannels > 1:
+                    frames = in_arr.reshape(-1, nchannels)
+                    if nchannels >= 2:
+                        i_vals = frames[:, 0].astype(np.float32)
+                        q_vals = frames[:, 1].astype(np.float32)
+                    else:
+                        i_vals = frames[:, 0].astype(np.float32)
+                        q_vals = np.zeros_like(i_vals)
+                else:
+                    i_vals = in_arr.astype(np.float32)
+                    q_vals = np.zeros_like(i_vals)
+
+                if gain != 1.0:
+                    i_vals = i_vals * gain
+                    q_vals = q_vals * gain
+
+                if dtype_name == "f32":
+                    i_out = (i_vals / 32767.0).astype(np.float32)
+                    q_out = (q_vals / 32767.0).astype(np.float32)
+                    out_arr = np.empty((i_out.size * 2,), dtype=np.float32)
+                    out_arr[0::2] = i_out
+                    out_arr[1::2] = q_out
+                    out.write(out_arr.tobytes())
+                elif dtype_name == "i16":
+                    i_out = np.clip(i_vals, -32768, 32767).astype(np.int16)
+                    q_out = np.clip(q_vals, -32768, 32767).astype(np.int16)
+                    out_arr = np.empty((i_out.size * 2,), dtype=np.int16)
+                    out_arr[0::2] = i_out
+                    out_arr[1::2] = q_out
+                    out.write(out_arr.tobytes())
+                elif dtype_name == "u8":
+                    i_u8 = np.clip((i_vals.astype(np.float32) / 256.0) + 128.0, 0, 255).astype(np.uint8)
+                    q_u8 = np.clip((q_vals.astype(np.float32) / 256.0) + 128.0, 0, 255).astype(np.uint8)
+                    out_arr = np.empty((i_u8.size * 2,), dtype=np.uint8)
+                    out_arr[0::2] = i_u8
+                    out_arr[1::2] = q_u8
+                    out.write(out_arr.tobytes())
+                else:
+                    raise ValueError("unsupported dtype")
+
+
 def _parse_args(argv: Tuple[str, ...]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Convert raw .iq to WAV (I->left, Q->right)")
+    p = argparse.ArgumentParser(description="Convert raw .iq to WAV (I->left, Q->right) or WAV to raw .iq")
     p.add_argument("-i", "--in", dest="infile", required=True)
     p.add_argument("-o", "--out", dest="outfile", required=True)
     p.add_argument("-r", "--rate", dest="rate", type=int, default=48000)
@@ -86,6 +161,7 @@ def _parse_args(argv: Tuple[str, ...]) -> argparse.Namespace:
     p.add_argument("--gain", dest="gain", type=float, default=1.0)
     p.add_argument("--mono", dest="mono", action="store_true")
     p.add_argument("--chunk", dest="chunk", type=int, default=1024 * 1024)
+    p.add_argument("--wav2iq", dest="wav2iq", action="store_true", help="Convert WAV input to raw interleaved IQ output (reverse)")
     return p.parse_args(list(argv))
 
 
@@ -97,7 +173,10 @@ def main(argv: Tuple[str, ...] = None) -> None:
     if not infile.exists() or not infile.is_file():
         print("Input file not found.", file=sys.stderr)
         raise SystemExit(1)
-    convert_iq_file(infile, outfile, args.rate, args.dtype, gain=args.gain, mono=args.mono, chunk_samples=args.chunk)
+    if args.wav2iq:
+        convert_wav_file(infile, outfile, args.dtype, gain=args.gain, chunk_frames=args.chunk)
+    else:
+        convert_iq_file(infile, outfile, args.rate, args.dtype, gain=args.gain, mono=args.mono, chunk_samples=args.chunk)
 
 
 if __name__ == "__main__":

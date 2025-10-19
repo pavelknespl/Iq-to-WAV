@@ -29,3 +29,9 @@
  ```powershell
  python main.py -i capture.iq -o out.wav -r 48000 -d f32 --gain 1.0
  ```
+
+Reverse (WAV -> IQ)
+```
+powershell
+python main.py -i stereo.wav -o out.iq -d f32 --wav2iq
+```
