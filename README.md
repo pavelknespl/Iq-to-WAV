@@ -31,7 +31,6 @@
  ```
 
 Reverse (WAV -> IQ)
-```
-powershell
+```powershell
 python main.py -i stereo.wav -o out.iq -d f32 --wav2iq
 ```
